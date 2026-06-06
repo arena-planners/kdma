@@ -1,0 +1,5 @@
+files:
+  - repo: arena-rosnav/kdma
+    filename: kdma_policy.ckpt
+    dest: model/kdma_policy.ckpt
+    sha256: 3c0706fb94aefa1ab2859ce369246bbdd1e9864be229b56c3c2b5deb95dd053c
