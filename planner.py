@@ -1,9 +1,13 @@
 """KDMA planner adapter for the arena_planners bridge.
 
-Network output is target velocity (vx, vy) in the goal-aligned ego frame;
-upstream env converts that delta to acceleration, here we use it as velocity directly.
-Returns the native holonomic (vx, vy) in the world frame; the bridge applies
-diff-drive projection when the target robot isn't holonomic.
+Native rate ~8.33 Hz (1/0.12); launch with planner_rate_hz:=8.333.
+
+The network outputs a goal-frame velocity target. Upstream integrates it as an
+acceleration, but the per-step fps factors cancel, so it reduces to a direct
+velocity assignment: rotate the output to world frame and clamp to MAX_SPEED.
+The accumulator is fed back as the velocity feature, matching upstream's
+self.velocity (commanded, not odom). Returns world-frame (vx, vy); the bridge
+projects to diff-drive when the target robot is not holonomic.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ _MAX_SPEED: float = 2.5
 _LOOKAHEAD: float = 2.0
 
 _actor: ActorNetwork | None = None
+_velocity: list[float] = [0.0, 0.0]
 
 
 def _get_actor() -> ActorNetwork:
@@ -43,15 +48,15 @@ def _get_actor() -> ActorNetwork:
 
 
 def step(features: dict) -> list[float]:
+    global _velocity
     actor = _get_actor()
 
     robot_pose = features.get("robot_pose")
-    robot_state = features.get("robot_state")
-    if robot_pose is None or robot_state is None:
+    if robot_pose is None:
         return [0.0, 0.0]
 
     px, py = float(robot_pose[0]), float(robot_pose[1])
-    vx, vy = float(robot_state[2]), float(robot_state[3])
+    vx, vy = _velocity[0], _velocity[1]
 
     global_plan = features.get("global_plan")
     goal_pose = features.get("goal_pose")
@@ -72,10 +77,13 @@ def step(features: dict) -> list[float]:
     v_rot_y = s * vx + c * vy
     agent_feat = np.array([dist, v_rot_x, v_rot_y], dtype=np.float32)
 
-    peds = features.get("pedestrians") or []
+    peds = features.get("pedestrians")
+    if peds is None:
+        peds = []
     neighbor_feats: list[list[float]] = []
     for ped in peds:
         npx_w, npy_w = float(ped[1]) - px, float(ped[2]) - py
+        # relative velocity vs. accumulator velocity (matches upstream self.velocity)
         nvx_w, nvy_w = float(ped[3]) - vx, float(ped[4]) - vy
         if np.hypot(npx_w, npy_w) > _NEIGHBORHOOD_RADIUS:
             continue
@@ -96,22 +104,26 @@ def step(features: dict) -> list[float]:
         dist_obj = actor(agent_tensor, neighbor_tensor)
         action_rot = dist_obj.mean.cpu().numpy()
 
+    # rotate goal-frame velocity target to world frame (R(+heading))
     cw, sw = float(np.cos(heading)), float(np.sin(heading))
-    out_vx = cw * float(action_rot[0]) - sw * float(action_rot[1])
-    out_vy = sw * float(action_rot[0]) + cw * float(action_rot[1])
+    vx_target = cw * float(action_rot[0]) - sw * float(action_rot[1])
+    vy_target = sw * float(action_rot[0]) + cw * float(action_rot[1])
 
-    speed = float(np.hypot(out_vx, out_vy))
+    _velocity[0] = vx_target
+    _velocity[1] = vy_target
+
+    speed = float(np.hypot(_velocity[0], _velocity[1]))
     if speed > _MAX_SPEED:
         scale = _MAX_SPEED / speed
-        out_vx *= scale
-        out_vy *= scale
+        _velocity[0] *= scale
+        _velocity[1] *= scale
 
-    return [out_vx, out_vy]
+    return [_velocity[0], _velocity[1]]
 
 
 def on_reset(episode_id: str, initial_state: dict | None) -> None:
-    global _actor
-    _actor = None
+    global _velocity
+    _velocity = [0.0, 0.0]
 
 
 if __name__ == "__main__":
