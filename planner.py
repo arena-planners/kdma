@@ -16,7 +16,6 @@ import pathlib
 
 import numpy as np
 import torch
-from arena_planners.geometry import lookahead_on_path
 from arena_planners.sdk import load_manifest, main_loop
 
 from networks import ActorNetwork
@@ -25,7 +24,6 @@ _WEIGHTS = pathlib.Path(__file__).parent / "model" / "kdma_policy.ckpt"
 
 _NEIGHBORHOOD_RADIUS: float = 5.0
 _MAX_SPEED: float = 2.5
-_LOOKAHEAD: float = 2.0
 
 _actor: ActorNetwork | None = None
 _velocity: list[float] = [0.0, 0.0]
@@ -58,12 +56,9 @@ def step(features: dict) -> list[float]:
     px, py = float(robot_pose[0]), float(robot_pose[1])
     vx, vy = _velocity[0], _velocity[1]
 
-    global_plan = features.get("global_plan")
     goal_pose = features.get("goal_pose")
     target: tuple[float, float] | None = None
-    if global_plan is not None and len(global_plan) > 0:
-        target = lookahead_on_path(global_plan, robot_pose, lookahead=_LOOKAHEAD)
-    if target is None and goal_pose is not None and len(goal_pose) >= 2:
+    if goal_pose is not None and len(goal_pose) >= 2:
         target = (float(goal_pose[0]), float(goal_pose[1]))
     if target is None:
         return [0.0, 0.0]
