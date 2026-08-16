@@ -5,7 +5,7 @@ Arena wrapper for the **KDMA** (Knowledge Distillation Multi-Agent) navigator. A
 ## Run
 
 ```sh
-arena launch mobile:=drl mobile.planner:=kdma
+arena launch robot.mobile:=drl robot.mobile.planner:=kdma
 ```
 
 Requires a global plan. Defaults to `nav2/navfn`.
